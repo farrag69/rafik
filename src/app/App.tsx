@@ -118,6 +118,16 @@ export default function App() {
     document.documentElement.classList.toggle('dark', isDark);
   }, [isDark]);
 
+  // Apply font size to document root so all relative font sizes scale
+  useEffect(() => {
+    const sizeMap: Record<FontSize, string> = {
+      small: '14px',
+      medium: '16px',
+      large: '18px',
+    };
+    document.documentElement.style.setProperty('--font-size', sizeMap[fontSize]);
+  }, [fontSize]);
+
   const loadTimings = useCallback(async (lat: number, lng: number, method: number, name: string) => {
     const key = todayKey(method);
     const cached = localStorage.getItem(key);

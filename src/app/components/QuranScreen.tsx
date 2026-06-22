@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Search, ChevronLeft, Bookmark, Type, Share2, X, ArrowRight,
@@ -139,51 +139,49 @@ function TafsirDrawer({
 }
 
 // ── Verse Block ──────────────────────────────────────────────────────────────
-function VerseBlock({
-  verse, text, fontSize, surahName, surahNum, onTafsir,
+// Each verse is rendered inline; the parent container uses flowing text.
+function VerseInline({
+  verse, text, surahName, surahNum, onTafsir,
 }: {
-  verse: number; text: string; fontSize: number;
+  verse: number; text: string;
   surahName: string; surahNum: number;
   onTafsir: (v: number, t: string) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [bookmarked, setBookmarked] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const handlePointerDown = () => {
-    timerRef.current = setTimeout(() => setMenuOpen(true), 500);
-  };
-  const handlePointerUp = () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-  };
 
   return (
-    <div className="relative">
-      <div
-        onPointerDown={handlePointerDown}
-        onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerUp}
-        className="py-4 border-b border-border last:border-0 cursor-pointer select-none"
+    <span className="relative">
+      <span
+        className="cursor-pointer"
+        onContextMenu={e => { e.preventDefault(); setMenuOpen(true); }}
+        onPointerDown={e => {
+          const t = setTimeout(() => setMenuOpen(true), 500);
+          const cancel = () => clearTimeout(t);
+          e.currentTarget.addEventListener('pointerup', cancel, { once: true });
+          e.currentTarget.addEventListener('pointerleave', cancel, { once: true });
+        }}
       >
-        <p
-          className="text-foreground leading-loose text-right"
-          style={{
-            fontFamily: "'Scheherazade New', 'Cairo', serif",
-            fontSize,
-            lineHeight: 2.2,
-            wordSpacing: 4,
-          }}
-        >
-          {text}
-          <span
-            className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-primary/15 text-primary mx-2 align-middle"
-            style={{ fontFamily: "'Cairo', sans-serif", fontSize: 12, fontWeight: 700 }}
-          >
-            {toAr(verse)}
-          </span>
-        </p>
-      </div>
+        {text}
+      </span>
+      {/* Verse number circle */}
+      <span
+        className="inline-flex items-center justify-center rounded-full bg-primary/15 text-primary mx-1.5 align-middle cursor-pointer"
+        style={{
+          fontFamily: "'Cairo', sans-serif",
+          fontSize: 11,
+          fontWeight: 700,
+          width: 26,
+          height: 26,
+          flexShrink: 0,
+          display: 'inline-flex',
+        }}
+        onClick={() => setMenuOpen(true)}
+      >
+        {toAr(verse)}
+      </span>
 
+      {/* Context menu */}
       <AnimatePresence>
         {menuOpen && (
           <>
@@ -193,7 +191,8 @@ function VerseBlock({
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: -8 }}
               transition={{ duration: 0.15 }}
-              className="absolute left-0 right-0 z-50 bg-card border border-border rounded-2xl shadow-2xl p-3 flex justify-around"
+              className="absolute right-0 z-50 bg-card border border-border rounded-2xl shadow-2xl p-3 flex justify-around"
+              style={{ minWidth: 200, top: '100%' }}
             >
               <button
                 className="flex flex-col items-center gap-1.5 p-2 rounded-xl hover:bg-muted transition-colors"
@@ -227,7 +226,7 @@ function VerseBlock({
           </>
         )}
       </AnimatePresence>
-    </div>
+    </span>
   );
 }
 
@@ -278,19 +277,28 @@ function QuranReader({
           </div>
         )}
 
-        {/* Verses */}
-        <div className="px-5 py-2 flex-1">
-          {surah.ayahs.map(a => (
-            <VerseBlock
-              key={a.number}
-              verse={a.number}
-              text={a.text}
-              fontSize={fontSize}
-              surahName={surah.name}
-              surahNum={surah.number}
-              onTafsir={handleTafsir}
-            />
-          ))}
+        {/* Verses — flowing Mushaf style */}
+        <div className="px-5 py-6 flex-1">
+          <p
+            className="text-foreground text-right leading-loose"
+            style={{
+              fontFamily: "'Scheherazade New', 'Cairo', serif",
+              fontSize,
+              lineHeight: 2.4,
+              wordSpacing: 4,
+            }}
+          >
+            {surah.ayahs.map(a => (
+              <VerseInline
+                key={a.number}
+                verse={a.number}
+                text={a.text}
+                surahName={surah.name}
+                surahNum={surah.number}
+                onTafsir={handleTafsir}
+              />
+            ))}
+          </p>
         </div>
 
         {/* Footer controls */}

@@ -15,9 +15,13 @@ export function QiblaScreen({ onClose }: Props) {
   const [lng, setLng] = useState<number | null>(null);
   const [heading, setHeading] = useState<number | null>(null);
   const [qiblaAngle, setQiblaAngle] = useState<number>(135); // Default for Cairo
-  const [status, setStatus] = useState<'searching' | 'found' | 'no-permission' | 'unsupported'>('searching');
+  const [status, setStatus] = useState<'searching' | 'found' | 'no-permission' | 'unsupported' | 'needs-permission'>('searching');
   const [permissionRequested, setPermissionRequested] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
+
+  const absoluteHandlerRef = useRef<((e: DeviceOrientationEvent) => void) | null>(null);
+  const relativeHandlerRef = useRef<((e: DeviceOrientationEvent) => void) | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Check if iOS on mount
   useEffect(() => {
@@ -49,11 +53,22 @@ export function QiblaScreen({ onClose }: Props) {
     }
   }, [lat, lng]);
 
-  // Request location and setup orientation listener
-  const startCompass = () => {
-    setStatus('searching');
+  const cleanupListeners = () => {
+    if (absoluteHandlerRef.current) {
+      window.removeEventListener('deviceorientationabsolute', absoluteHandlerRef.current, true);
+      absoluteHandlerRef.current = null;
+    }
+    if (relativeHandlerRef.current) {
+      window.removeEventListener('deviceorientation', relativeHandlerRef.current, true);
+      relativeHandlerRef.current = null;
+    }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  };
 
-    // 1. Get GPS coordinates
+  const requestLocation = () => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
@@ -62,79 +77,98 @@ export function QiblaScreen({ onClose }: Props) {
         },
         (error) => {
           console.warn('Geolocation error, using Cairo default:', error);
-          // Fallback to Cairo
           setLat(30.0444);
           setLng(31.2357);
         },
         { enableHighAccuracy: true, timeout: 10000 }
       );
     } else {
-      // Fallback to Cairo
       setLat(30.0444);
       setLng(31.2357);
     }
+  };
 
-    // 2. Device Orientation API
-    const handleOrientation = (e: DeviceOrientationEvent) => {
-      // iOS specific heading
-      if ('webkitCompassHeading' in e) {
-        const headingVal = e.webkitCompassHeading as number;
-        if (headingVal !== undefined) {
-          setHeading(headingVal);
-        }
-      } 
-      // Standard absolute orientation
-      else if (e.alpha !== null) {
-        // alpha is 0 to 360 rotating counter-clockwise. Heading is clockwise.
-        let headingVal = 360 - e.alpha;
+  const startCompass = () => {
+    setStatus('searching');
+    cleanupListeners();
+
+    // Fetch location coords
+    requestLocation();
+
+    let lastEventWasAbsolute = false;
+
+    const handleOrientationAbsolute = (e: DeviceOrientationEvent) => {
+      if (e.alpha !== null) {
+        lastEventWasAbsolute = true;
+        const headingVal = (360 - e.alpha + 360) % 360;
         setHeading(headingVal);
       }
     };
 
-    const requestIOSPermission = async () => {
-      const reqPermission = (DeviceOrientationEvent as any).requestPermission;
-      if (typeof reqPermission === 'function') {
-        try {
-          const res = await reqPermission();
-          if (res === 'granted') {
-            window.addEventListener('deviceorientation', handleOrientation, true);
-            setPermissionRequested(true);
-          } else {
-            setStatus('no-permission');
-          }
-        } catch (err) {
-          console.error('Permission request rejected:', err);
-          setStatus('no-permission');
+    const handleOrientation = (e: DeviceOrientationEvent) => {
+      if ('webkitCompassHeading' in e) {
+        const headingVal = (e as any).webkitCompassHeading as number;
+        if (headingVal !== undefined && headingVal !== null) {
+          setHeading(headingVal);
         }
-      } else {
-        // Not iOS or no permission function
-        window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-        window.addEventListener('deviceorientation', handleOrientation, true);
+      } else if (e.alpha !== null && !lastEventWasAbsolute) {
+        const headingVal = (360 - e.alpha + 360) % 360;
+        setHeading(headingVal);
       }
     };
 
-    if (isIOS && typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
-      requestIOSPermission();
-    } else {
-      // Android / Desktop standard
-      if ('ondeviceorientationabsolute' in window) {
-        window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-      } else if ('ondeviceorientation' in window) {
-        window.addEventListener('deviceorientation', handleOrientation, true);
-      } else {
-        // Orientation not supported
-        setStatus('unsupported');
+    absoluteHandlerRef.current = handleOrientationAbsolute;
+    relativeHandlerRef.current = handleOrientation;
+
+    window.addEventListener('deviceorientationabsolute', handleOrientationAbsolute, true);
+    window.addEventListener('deviceorientation', handleOrientation, true);
+
+    // Timeout fallback for devices without orientation sensors (like Desktops)
+    timeoutRef.current = setTimeout(() => {
+      setHeading(prev => {
+        if (prev === null) {
+          setStatus('found'); // Stop pulse animation, display static compass
+        }
+        return prev;
+      });
+    }, 2500);
+  };
+
+  const requestIOSPermissionDirect = async () => {
+    const reqPermission = (DeviceOrientationEvent as any).requestPermission;
+    if (typeof reqPermission === 'function') {
+      try {
+        const res = await reqPermission();
+        if (res === 'granted') {
+          setPermissionRequested(true);
+          startCompass();
+        } else {
+          setStatus('no-permission');
+        }
+      } catch (err) {
+        console.error('Permission request rejected:', err);
+        setStatus('no-permission');
       }
+    } else {
+      startCompass();
     }
   };
 
+  // Main coordinator on mount / isIOS change
   useEffect(() => {
-    startCompass();
+    const hasIOSPermissionApi = typeof DeviceOrientationEvent !== 'undefined' && 
+      typeof (DeviceOrientationEvent as any).requestPermission === 'function';
+
+    if (isIOS && hasIOSPermissionApi && !permissionRequested) {
+      setStatus('needs-permission');
+    } else {
+      startCompass();
+    }
+
     return () => {
-      window.removeEventListener('deviceorientation', () => {});
-      window.removeEventListener('deviceorientationabsolute', () => {});
+      cleanupListeners();
     };
-  }, [isIOS]);
+  }, [isIOS, permissionRequested]);
 
   // Calculate the relative direction of Qibla relative to the top of the phone screen
   // If heading is 0 (phone pointing North), Qibla is at qiblaAngle.
@@ -201,6 +235,31 @@ export function QiblaScreen({ onClose }: Props) {
             </motion.div>
           )}
 
+          {status === 'needs-permission' && (
+            <motion.div
+              key="needs-permission"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="flex flex-col items-center justify-center text-center max-w-sm"
+            >
+              <div className="relative w-28 h-28 flex items-center justify-center mb-6">
+                <div className="absolute inset-0 rounded-full border border-primary/20 bg-primary/5 animate-pulse" />
+                <Navigation size={44} className="text-primary transform rotate-45" />
+              </div>
+              <h3 className="text-foreground font-bold mb-2" style={{ fontSize: 18 }}>تفعيل البوصلة الذكية</h3>
+              <p className="text-muted-foreground text-sm mb-6 leading-relaxed">
+                يرجى تفعيل مستشعرات الحركة والاتجاه لتحديد اتجاه الكعبة الشريفة تلقائياً أثناء تدوير الهاتف.
+              </p>
+              <button
+                onClick={requestIOSPermissionDirect}
+                className="px-6 py-3 rounded-2xl bg-primary text-primary-foreground font-bold text-sm shadow-lg hover:bg-primary/90 transition-all transform active:scale-95 w-full"
+              >
+                تفعيل البوصلة 🧭
+              </button>
+            </motion.div>
+          )}
+
           {status === 'no-permission' && (
             <motion.div
               key="no-permission"
@@ -216,15 +275,15 @@ export function QiblaScreen({ onClose }: Props) {
               </p>
               {isIOS && !permissionRequested && (
                 <button
-                  onClick={startCompass}
-                  className="px-6 py-3 rounded-2xl bg-primary text-primary-foreground font-bold text-sm shadow-lg hover:bg-primary/90 transition-colors w-full"
+                  onClick={requestIOSPermissionDirect}
+                  className="px-6 py-3 rounded-2xl bg-primary text-primary-foreground font-bold text-sm shadow-lg hover:bg-primary/90 transition-all transform active:scale-95 w-full"
                 >
                   السماح بالوصول للمستشعرات
                 </button>
               )}
               <button
-                onClick={startCompass}
-                className="mt-3 px-6 py-3 rounded-2xl bg-muted text-foreground font-bold text-sm transition-colors w-full"
+                onClick={requestIOSPermissionDirect}
+                className="mt-3 px-6 py-3 rounded-2xl bg-muted text-foreground font-bold text-sm transition-all transform active:scale-95 w-full"
               >
                 إعادة المحاولة
               </button>
@@ -273,9 +332,9 @@ export function QiblaScreen({ onClose }: Props) {
                     أنت الآن باتجاه القبلة الشريفة ✨
                   </motion.p>
                 ) : (
-                  <p className="text-muted-foreground text-sm">
+                  <p className="text-muted-foreground text-sm text-center px-4">
                     {heading === null 
-                      ? 'قم بتدوير الجهاز لمعايرة البوصلة' 
+                      ? 'مستشعر الاتجاه غير متوفر. تم عرض اتجاه القبلة الثابت لموقعك.' 
                       : `قم بتدوير الجهاز بمقدار ${toAr(Math.round(relativeQiblaAngle))}° حتى يتطابق السهمان`}
                   </p>
                 )}

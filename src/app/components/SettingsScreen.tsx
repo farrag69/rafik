@@ -11,12 +11,13 @@ function ToggleSwitch({ checked, onChange }: { checked: boolean; onChange: () =>
   return (
     <button
       onClick={onChange}
-      className="relative w-12 rounded-full transition-colors duration-300 flex items-center flex-shrink-0"
-      style={{ backgroundColor: checked ? 'var(--primary)' : 'var(--switch-background)', height: 26, width: 48 }}
+      className="relative rounded-full transition-colors duration-300 flex items-center flex-shrink-0"
+      style={{ backgroundColor: checked ? 'var(--primary)' : 'var(--muted)', height: 26, width: 48 }}
     >
+      {/* In RTL layout: checked = thumb at left (value 2px), unchecked = thumb at right (value 24px) */}
       <motion.div
         className="absolute w-5 h-5 bg-white rounded-full shadow-md"
-        animate={{ x: checked ? 24 : 2 }}
+        animate={{ right: checked ? 2 : 'auto', left: checked ? 'auto' : 2 }}
         transition={{ type: 'spring', stiffness: 500, damping: 35 }}
       />
     </button>
@@ -79,9 +80,23 @@ export function SettingsScreen({
     prayer: true, azkar: true, quran: false, tasbeeh: false,
   });
   const [showMethodPicker, setShowMethodPicker] = useState(false);
+  const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
 
   const toggleNotif = (key: keyof typeof notifications) => {
     setNotifications(p => ({ ...p, [key]: !p[key] }));
+  };
+
+  const refreshLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationStatus('error');
+      return;
+    }
+    setLocationStatus('loading');
+    navigator.geolocation.getCurrentPosition(
+      () => setLocationStatus('done'),
+      () => setLocationStatus('error'),
+      { timeout: 8000 }
+    );
   };
 
   return (
@@ -133,10 +148,12 @@ export function SettingsScreen({
               <button
                 key={opt.value}
                 onClick={() => setFontSize(opt.value)}
-                className={`flex-1 py-2 rounded-xl transition-all ${
-                  fontSize === opt.value ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+                className={`flex-1 py-2 rounded-xl transition-all font-bold ${
+                  fontSize === opt.value
+                    ? 'bg-primary text-primary-foreground shadow-md scale-105'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
                 }`}
-                style={{ fontSize: 13 }}
+                style={{ fontSize: opt.value === 'small' ? 11 : opt.value === 'large' ? 16 : 13 }}
               >
                 {opt.label}
               </button>
@@ -147,7 +164,22 @@ export function SettingsScreen({
 
       {/* Prayer settings */}
       <SectionCard title="الصلاة">
-        <SettingRow icon={<MapPin size={16} />} label="الموقع" value="يتم تحديده تلقائياً" right={<div />} />
+        <SettingRow
+          icon={<MapPin size={16} />}
+          label="الموقع"
+          value={
+            locationStatus === 'loading' ? 'جاري التحديد...' :
+            locationStatus === 'done' ? 'تم تحديث الموقع ✓' :
+            locationStatus === 'error' ? 'تعذّر تحديد الموقع' :
+            'يتم تحديده تلقائياً'
+          }
+          onPress={refreshLocation}
+          right={
+            locationStatus === 'loading'
+              ? <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              : <ChevronLeft size={16} className="text-muted-foreground" />
+          }
+        />
         <div>
           <SettingRow
             icon={<Sliders size={16} />}
@@ -194,14 +226,39 @@ export function SettingsScreen({
 
       {/* Quran settings */}
       <SectionCard title="القرآن">
-        <SettingRow icon={<BookOpen size={16} />} label="اختيار القارئ" value="عبد الباسط عبد الصمد" />
-        <SettingRow icon={<Type size={16} />} label="خط القرآن" value="خط عثماني (Scheherazade New)" />
+        <SettingRow
+          icon={<BookOpen size={16} />}
+          label="اختيار القارئ"
+          value="عبد الباسط عبد الصمد"
+          onPress={() => { /* TODO: open reciter picker */ }}
+        />
+        <SettingRow
+          icon={<Type size={16} />}
+          label="خط القرآن"
+          value="خط عثماني (Scheherazade New)"
+          onPress={() => { /* TODO: open font picker */ }}
+        />
       </SectionCard>
 
       {/* Data */}
       <SectionCard title="البيانات">
-        <SettingRow icon={<Database size={16} />} label="النسخ الاحتياطي" value="آخر نسخة: اليوم" />
-        <SettingRow icon={<Database size={16} />} label="مسح البيانات" onPress={() => {}} />
+        <SettingRow
+          icon={<Database size={16} />}
+          label="النسخ الاحتياطي"
+          value="آخر نسخة: اليوم"
+          onPress={() => { /* TODO: backup */ }}
+        />
+        <SettingRow
+          icon={<Database size={16} />}
+          label="مسح البيانات"
+          value="مسح كل البيانات المحلية"
+          onPress={() => {
+            if (window.confirm('هل أنت متأكد من مسح كل البيانات؟')) {
+              localStorage.clear();
+              window.location.reload();
+            }
+          }}
+        />
       </SectionCard>
 
       {/* ── Adham Memorial Card ── */}
